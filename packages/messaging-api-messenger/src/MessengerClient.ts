@@ -122,7 +122,48 @@ export default class MessengerClient {
 
       const appSecret = this._appSecret as string;
 
+      this._axios.interceptors.request.use(
+        createRequestInterceptor({ onRequest: this._onRequest })
+      );
+
       this._axios.interceptors.request.use(config => {
+        const isBatch = config.url === '/' && Array.isArray(config.data.batch);
+
+        if (isBatch) {
+          // eslint-disable-next-line no-param-reassign
+          config.data.batch = config.data.batch.map((item: any) => {
+            const urlParts = url.parse(item.relativeUrl, true);
+            let accessToken = get(urlParts, 'query.access_token');
+            if (!accessToken && item.body) {
+              const entries = decodeURIComponent(item.body)
+                .split('&')
+                .map(pair => pair.split('='));
+
+              const accessTokenEntry = entries.find(
+                ([key]) => key === 'access_token'
+              );
+              if (accessTokenEntry) {
+                accessToken = accessTokenEntry[1];
+              }
+            }
+
+            if (accessToken) {
+              const appSecretProof = crypto
+                .createHmac('sha256', appSecret)
+                .update(accessToken, 'utf8')
+                .digest('hex');
+              return {
+                ...item,
+                relativeUrl: appendQuery(item.relativeUrl, {
+                  appsecret_proof: appSecretProof,
+                }),
+              };
+            }
+
+            return item;
+          });
+        }
+
         const urlParts = url.parse(config.url || '', true);
         const accessToken = get(
           urlParts,
@@ -143,10 +184,6 @@ export default class MessengerClient {
         return config;
       });
     }
-
-    this._axios.interceptors.request.use(
-      createRequestInterceptor({ onRequest: this._onRequest })
-    );
   }
 
   get version(): string {
